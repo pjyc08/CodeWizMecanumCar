@@ -1,0 +1,211 @@
+﻿//-- KeyeStudio 4WD mecanum car를 codewiz와 연동 시킴.
+//-- WizController APP으로 조정할 수 있음.
+//-- 전진, 후진, 좌회전, 우회전, 좌로 수평이동, 우로 수평이동 가능.
+
+#include <Arduino.h> 
+#include "wizSystem.h"
+#include "BluetoothSerial.h"
+#include "WizNeopixel.h"
+#include <wizOLED.h>
+#include <VL53L0X.h>
+#include <Wire.h>
+#include <SparkFun_LIS2DH12.h>
+
+BluetoothSerial bt;
+
+#define LEDC_CHANNEL_0 (6)
+#define LEDC_TIMER_13_BIT (13)
+#define LEDC_BASE_FREQ (5000)
+#define BOARD_PASSIVEBUZZER_PIN (25)
+note_t note[12] = {
+    NOTE_C, NOTE_Cs, NOTE_D, NOTE_Eb, NOTE_E, 
+    NOTE_F, NOTE_Fs, NOTE_G, NOTE_Gs, NOTE_A, 
+    NOTE_Bb, NOTE_B
+}; // end_note
+
+uint8_t recvByte;
+
+#define I2C_SLAVE_ADDR 0x30  // 슬레이브 주소 (16진수 0x30)
+
+uint8_t Stop = 0;
+uint8_t Forward    = 0b01010101;
+uint8_t Backward   = 0b10101010;
+uint8_t TurnLeft   = 0b01100110;
+uint8_t TurnRight  = 0b10011001;
+uint8_t SlideLeft  = 0b01101001;
+uint8_t SlideRight = 0b10010110;
+uint8_t WheelSpeed = 0x3F;
+
+void runWheel(uint8_t ActNumber) {
+  for (int i = 0; i < 8; i++) {
+    Wire.beginTransmission(I2C_SLAVE_ADDR);  // 슬레이브 주소로 전송 시작
+    Wire.write(i+1);
+    if((ActNumber & (0x80 >> i)) != 0) 
+      Wire.write(WheelSpeed);
+    else 
+      Wire.write(0);
+    int result = Wire.endTransmission();     // 전송 종료
+  }
+}
+
+
+VL53L0X DistanceSen;
+uint16_t getDistance()
+{
+    if(DistanceSen.timeoutOccurred()== 0)
+    {
+        return DistanceSen.readRangeSingleMillimeters();
+    }
+    else 
+    {
+        return 0;
+    }        
+}
+uint16_t getMicValue() {
+    uint16_t _value = abs(analogRead(35)- 1320);
+    _value = constrain(_value, 0, 1320);
+    _value = map(_value, 0, 1320, 0, 1023);
+    return _value;
+}
+uint16_t getLightValue() {
+    uint16_t _value = constrain(analogRead(34), 0, 4095);
+    _value = map(_value, 0, 4095, 1023, 0);
+    return _value;
+}
+SPARKFUN_LIS2DH12 accel;
+
+int16_t getDigitalGyroRawValue(int num)
+{
+    switch (num)
+    {
+        case 0:
+            return accel.getRawX() / 181;
+        case 1:
+            return accel.getRawY() / 181;
+        case 2:
+            return accel.getRawZ() / 181;
+    }
+}
+
+int8_t getGyroValue(int num)
+{
+    while(!accel.available());
+    int16_t _value = 0;
+    _value = getDigitalGyroRawValue(num);
+    if (_value > 90)
+    {
+        _value = 90;
+    }
+    else if (_value < -90)
+    {
+        _value = -90;
+    }
+    return (int8_t)_value;
+}
+
+String getSensorValue() {
+    uint16_t distance = getDistance();
+    uint16_t micValue = getMicValue();
+    uint16_t lightValue = getLightValue();
+    int8_t gyroX = getGyroValue(0);
+    int8_t gyroY = getGyroValue(1);
+    int8_t gyroZ = getGyroValue(2);
+
+    String sensorValues = String(micValue) + "," + String(lightValue) + "," + String(distance) + "," + String(gyroX) + "," + String(gyroY) + "," + String(gyroZ);
+
+    return sensorValues;
+}
+
+
+void setup() {
+  wizSystem_Init();
+  bt.begin("BrCar");
+  wizPixels.init();
+  OLED_init();
+  ledcSetup(LEDC_CHANNEL_0, LEDC_BASE_FREQ, LEDC_TIMER_13_BIT);
+  ledcAttachPin(BOARD_PASSIVEBUZZER_PIN, LEDC_CHANNEL_0);
+  
+  OLED_clear();
+  WheelSpeed = 0;
+  Wire.begin();
+  accel.begin(0x18, Wire);
+  DistanceSen.setAddress(0x27);
+  DistanceSen.setTimeout(500);
+  DistanceSen.init();
+  DistanceSen.setSignalRateLimit(0.1);
+  DistanceSen.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 18);
+  DistanceSen.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 14);
+}
+
+void loop() {
+  if(bt.available()) {
+    recvByte = bt.read();
+    //Serial.println(recvByte);
+    
+    switch(recvByte) {
+      case '0':
+      case '1':
+      case '2':
+      case '3':    
+      case '4':
+      case '5':  
+      case '6':  
+      case '7':   
+      case '8':  
+      case '9':     
+        //WheelSpeed = (recvByte-0x30+1)*23;
+        WheelSpeed = (recvByte-0x30+1)*10;
+        break;
+      case 'q':
+        WheelSpeed = 127; break;        
+      
+      case 'S':
+        runWheel(Stop); break;
+          
+      case 'F': 
+        runWheel(Forward); break;
+      case 'B':
+        runWheel(Backward); break;
+      case 'L':
+        runWheel(TurnLeft); break;
+      case 'R':
+        runWheel(TurnRight); break;
+      case 'G':
+        runWheel(SlideLeft); break;
+      case 'I':
+        runWheel(SlideRight); break;
+      case 'H':
+        runWheel(SlideLeft); break;
+      case 'J':
+        runWheel(SlideRight); break;
+        
+      case 'W':
+        wizPixels.setColorAll("#ffffff"); 
+        break;
+      case 'w':
+        wizPixels.setColorAll(0, 0, 0);
+        break;
+      case 'X':
+        OLED_drawCircle(64, 64, 60, 1, 1);
+        break;
+      case 'x':
+        OLED_clear();
+        break;
+    
+      case 'V':
+        ledcWriteNote(LEDC_CHANNEL_0, note[0], 4);
+        delay((1000 / 8) * 1.3);
+        ledcWriteTone(LEDC_CHANNEL_0, 0);
+        ledcWriteNote(LEDC_CHANNEL_0, note[4], 4);
+        delay((1000 / 8) * 1.3);
+        ledcWriteTone(LEDC_CHANNEL_0, 0);
+        ledcWriteNote(LEDC_CHANNEL_0, note[7], 4);
+        delay((1000 / 8) * 1.3);
+        ledcWriteTone(LEDC_CHANNEL_0, 0);
+        break;
+        
+      case 'O':
+        bt.println(getSensorValue());
+    }
+  }
+}
