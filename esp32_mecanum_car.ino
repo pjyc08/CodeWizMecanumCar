@@ -1,3 +1,7 @@
+
+//-- 단일 파일로 라이브러리 없이 MecanumWheel car 구동 가능
+//-- 나중에 라이브러리 별도로 만들어서 적용 하자
+
 #include <Arduino.h>
 #include "wizSystem.h"
 #include "BluetoothSerial.h"
@@ -105,7 +109,7 @@ String getSensorValue() {
 
 void setup() {
   wizSystem_Init();
-  bt.begin("BrCar");
+  bt.begin("MecanumCar");
   wizPixels.init();
   OLED_init();
   ledcSetup(LEDC_CHANNEL_0, LEDC_BASE_FREQ, LEDC_TIMER_13_BIT);
